@@ -121,7 +121,8 @@ pub async fn run_submit(
         analysis.segments.len(),
         if analysis.segments.len() == 1 { "" } else { "s" }
     );
-    for segment in &analysis.segments {
+    // Display newest (leaf) first, oldest (closest to trunk) last
+    for segment in analysis.segments.iter().rev() {
         let synced = if segment.bookmark.is_synced {
             " (synced)"
         } else {

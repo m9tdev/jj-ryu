@@ -6,14 +6,15 @@ use chrono::{DateTime, TimeZone, Utc};
 use jj_lib::backend::Timestamp;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
-use jj_lib::git::{self, GitFetch, GitRefUpdate, RemoteCallbacks};
+use jj_lib::git::{self, expand_fetch_refspecs, GitFetch, GitRefUpdate, GitSettings, RemoteCallbacks};
 use jj_lib::op_store::{RemoteRef, RemoteRefState};
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::{RefName, RemoteName};
 use jj_lib::repo::{Repo, StoreFactories};
-use jj_lib::revset::{self, RevsetExtensions, RevsetParseContext, SymbolResolver};
-use jj_lib::settings::{GitSettings, UserSettings};
-use jj_lib::str_util::StringPattern;
+use jj_lib::repo_path::RepoPathUiConverter;
+use jj_lib::revset::{self, RevsetExtensions, RevsetParseContext, RevsetWorkspaceContext, SymbolResolver};
+use jj_lib::settings::UserSettings;
+use jj_lib::str_util::{StringExpression, StringMatcher, StringPattern};
 use jj_lib::workspace::{default_working_copy_factories, Workspace};
 use std::path::Path;
 use std::sync::Arc;
@@ -79,8 +80,9 @@ impl JjWorkspace {
     }
 
     /// Get git settings from user settings
-    fn git_settings(&self) -> GitSettings {
-        GitSettings::from_settings(&self.settings).unwrap_or_default()
+    fn git_settings(&self) -> Result<GitSettings> {
+        GitSettings::from_settings(&self.settings)
+            .map_err(|e| Error::Config(format!("Invalid git settings: {e}")))
     }
 
     /// Get all local bookmarks
@@ -96,17 +98,17 @@ impl JjWorkspace {
                     .get_commit(commit_id)
                     .map_err(|e| Error::Workspace(format!("Failed to get commit: {e}")))?;
 
-                // Check if bookmark has remote tracking
-                let name_pattern = StringPattern::exact(name.as_str());
-                let remote_pattern = StringPattern::everything();
+                // Check if bookmark has remote tracking (excluding @git pseudo-remote)
+                let name_matcher = StringPattern::exact(name.as_str()).to_matcher();
+                let remote_matcher = StringMatcher::All;
                 let has_remote = view
-                    .remote_bookmarks_matching(&name_pattern, &remote_pattern)
-                    .next()
-                    .is_some();
+                    .remote_bookmarks_matching(&name_matcher, &remote_matcher)
+                    .any(|(symbol, _)| symbol.remote.as_str() != "git");
 
-                // Check if synced with remote (any remote)
+                // Check if synced with remote (excluding @git pseudo-remote)
                 let is_synced = view
-                    .remote_bookmarks_matching(&name_pattern, &remote_pattern)
+                    .remote_bookmarks_matching(&name_matcher, &remote_matcher)
+                    .filter(|(symbol, _)| symbol.remote.as_str() != "git")
                     .any(|(_, remote_ref)| {
                         remote_ref.target.as_normal().is_some_and(|id| id == commit_id)
                     });
@@ -145,15 +147,17 @@ impl JjWorkspace {
             .get_commit(commit_id)
             .map_err(|e| Error::Workspace(format!("Failed to get commit: {e}")))?;
 
-        let name_pattern = StringPattern::exact(name);
-        let remote_pattern = StringPattern::everything();
+        // Check if bookmark has remote tracking (excluding @git pseudo-remote)
+        let name_matcher = StringPattern::exact(name).to_matcher();
+        let remote_matcher = StringMatcher::All;
         let has_remote = view
-            .remote_bookmarks_matching(&name_pattern, &remote_pattern)
-            .next()
-            .is_some();
+            .remote_bookmarks_matching(&name_matcher, &remote_matcher)
+            .any(|(symbol, _)| symbol.remote.as_str() != "git");
 
+        // Check if synced with remote (excluding @git pseudo-remote)
         let is_synced = view
-            .remote_bookmarks_matching(&name_pattern, &remote_pattern)
+            .remote_bookmarks_matching(&name_matcher, &remote_matcher)
+            .filter(|(symbol, _)| symbol.remote.as_str() != "git")
             .any(|(_, remote_ref)| {
                 remote_ref.target.as_normal().is_some_and(|id| id == commit_id)
             });
@@ -199,22 +203,91 @@ impl JjWorkspace {
         }))
     }
 
+    /// Preferred remote order for detecting default branch
+    const REMOTE_PREFERENCE: &[&str] = &["origin", "upstream"];
+
+    /// Default `trunk()` revset alias - matches jj CLI's built-in default
+    ///
+    /// Uses `latest()` to pick the newest commit if multiple trunk candidates exist,
+    /// checking main/master/trunk on origin and upstream remotes, falling back to `root()`.
+    const DEFAULT_TRUNK_ALIAS: &str = r#"latest(
+        remote_bookmarks(exact:"main", exact:"origin") |
+        remote_bookmarks(exact:"master", exact:"origin") |
+        remote_bookmarks(exact:"trunk", exact:"origin") |
+        remote_bookmarks(exact:"main", exact:"upstream") |
+        remote_bookmarks(exact:"master", exact:"upstream") |
+        remote_bookmarks(exact:"trunk", exact:"upstream") |
+        root()
+    )"#;
+
+    /// Detect default branch from git remote HEAD (e.g., refs/remotes/origin/HEAD)
+    ///
+    /// Returns `(branch_name, remote_name)` if found.
+    fn detect_default_branch_from_remote(
+        git_repo: &gix::Repository,
+    ) -> Option<(String, &'static str)> {
+        for &remote in Self::REMOTE_PREFERENCE {
+            let ref_name = format!("refs/remotes/{remote}/HEAD");
+            if let Some(reference) = git_repo.try_find_reference(&ref_name).ok().flatten() {
+                if let Some(target_name) = reference.target().try_name() {
+                    let target_str = target_name.to_string();
+                    let prefix = format!("refs/remotes/{remote}/");
+                    if let Some(branch) = target_str.strip_prefix(&prefix) {
+                        return Some((branch.to_string(), remote));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Compute `trunk()` alias by checking remote HEAD first, then falling back to default
+    fn compute_trunk_alias(repo: &Arc<jj_lib::repo::ReadonlyRepo>) -> String {
+        if let Ok(git_repo) = git::get_git_repo(repo.store()) {
+            if let Some((branch, remote)) = Self::detect_default_branch_from_remote(&git_repo) {
+                return format!(r#"remote_bookmarks(exact:"{branch}", exact:"{remote}")"#);
+            }
+        }
+        Self::DEFAULT_TRUNK_ALIAS.to_string()
+    }
+
     /// Resolve a revset expression to commits
     pub fn resolve_revset(&self, expr: &str) -> Result<Vec<LogEntry>> {
         let repo = self.repo()?;
 
         // Parse and evaluate the revset
         let extensions = RevsetExtensions::default();
-        let aliases = revset::RevsetAliasesMap::default();
+        let mut aliases = revset::RevsetAliasesMap::default();
+
+        // Define trunk() alias - checks remote HEAD first, then falls back to jj's default
+        let trunk_alias = Self::compute_trunk_alias(&repo);
+        aliases
+            .insert("trunk()", trunk_alias)
+            .expect("trunk() alias declaration is valid");
+
         let date_context = jj_lib::time_util::DatePatternContext::Local(chrono::Local::now());
+
+        // Create workspace context for trunk() resolution
+        let workspace_root = self.workspace.workspace_root().to_path_buf();
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: workspace_root.clone(),
+            base: workspace_root,
+        };
+        let workspace_name = self.workspace.workspace_name();
+        let workspace_ctx = RevsetWorkspaceContext {
+            path_converter: &path_converter,
+            workspace_name,
+        };
 
         let context = RevsetParseContext {
             aliases_map: &aliases,
             local_variables: std::collections::HashMap::new(),
             user_email: self.settings.user_email(),
             date_pattern_context: date_context,
+            default_ignored_remote: Some(git::REMOTE_NAME_FOR_LOCAL_GIT_REPO),
+            use_glob_by_default: false,
             extensions: &extensions,
-            workspace: None,
+            workspace: Some(workspace_ctx),
         };
 
         let mut diagnostics = revset::RevsetDiagnostics::new();
@@ -320,7 +393,7 @@ impl JjWorkspace {
             let url = git_repo
                 .try_find_remote(name.as_str())
                 .and_then(std::result::Result::ok)
-                .and_then(|remote: gix::Remote<'_>| {
+                .and_then(|remote| {
                     remote
                         .url(gix::remote::Direction::Push)
                         .map(|u| u.to_bstring().to_string())
@@ -339,7 +412,7 @@ impl JjWorkspace {
     /// Fetch from a git remote
     pub fn git_fetch(&mut self, remote: &str) -> Result<()> {
         let repo = self.repo()?;
-        let git_settings = self.git_settings();
+        let git_settings = self.git_settings()?;
 
         // Start a transaction for the fetch
         let mut tx = repo.start_transaction();
@@ -348,11 +421,14 @@ impl JjWorkspace {
             .map_err(|e| Error::Git(format!("Failed to create fetch: {e}")))?;
 
         let remote_name = RemoteName::new(remote);
+        let refspecs = expand_fetch_refspecs(remote_name, StringExpression::all())
+            .map_err(|e| Error::Git(format!("Failed to expand refspecs: {e}")))?;
         fetch
             .fetch(
                 remote_name,
-                &[StringPattern::everything()],
+                refspecs,
                 RemoteCallbacks::default(),
+                None,
                 None,
             )
             .map_err(|e| Error::Git(format!("Failed to fetch: {e}")))?;
@@ -372,7 +448,7 @@ impl JjWorkspace {
     /// Push a bookmark to a remote
     pub fn git_push(&mut self, bookmark: &str, remote: &str) -> Result<()> {
         let repo = self.repo()?;
-        let git_settings = self.git_settings();
+        let git_settings = self.git_settings()?;
 
         // Get the local bookmark target
         let view = repo.view();
@@ -391,6 +467,25 @@ impl JjWorkspace {
         let remote_ref = view.get_remote_bookmark(remote_symbol);
         let expected_current_target = remote_ref.target.as_normal().cloned();
 
+        // Start a transaction first - needed for export_refs
+        let mut tx = repo.start_transaction();
+
+        // Export refs to underlying git repo before pushing
+        // This is essential for new bookmarks that don't exist in .git/refs/heads/ yet
+        let export_stats = git::export_refs(tx.repo_mut())
+            .map_err(|e| Error::Git(format!("Failed to export refs: {e}")))?;
+
+        // Check if our bookmark failed to export
+        if export_stats
+            .failed_bookmarks
+            .iter()
+            .any(|(symbol, _)| symbol.name.as_str() == bookmark)
+        {
+            return Err(Error::Git(format!(
+                "Failed to export bookmark '{bookmark}' to git"
+            )));
+        }
+
         // Build the update for pushing
         let update = GitRefUpdate {
             qualified_name: format!("refs/heads/{bookmark}").into(),
@@ -399,16 +494,13 @@ impl JjWorkspace {
         };
 
         git::push_updates(
-            repo.as_ref(),
+            tx.repo_mut().base_repo().as_ref(),
             &git_settings,
             remote_name,
             &[update],
             RemoteCallbacks::default(),
         )
         .map_err(|e| Error::Git(format!("Failed to push: {e}")))?;
-
-        // Start a transaction to update remote tracking ref
-        let mut tx = repo.start_transaction();
 
         // Update the remote tracking ref to match what we just pushed
         // This ensures the bookmark shows as "synced" after push
@@ -424,12 +516,19 @@ impl JjWorkspace {
         Ok(())
     }
 
-    /// Get the default branch name (main/master)
+    /// Get the default branch name by checking remote HEAD first, then common names
     pub fn default_branch(&self) -> Result<String> {
         let repo = self.repo()?;
-        let view = repo.view();
 
-        // Try common default branch names
+        // Try to detect from git remote HEAD (handles custom default branches like "develop")
+        if let Ok(git_repo) = git::get_git_repo(repo.store()) {
+            if let Some((branch, _)) = Self::detect_default_branch_from_remote(&git_repo) {
+                return Ok(branch);
+            }
+        }
+
+        // Fall back to checking local bookmarks for common names
+        let view = repo.view();
         for name in &["main", "master", "trunk"] {
             let target = view.get_local_bookmark(RefName::new(name));
             if target.is_present() {
@@ -437,7 +536,7 @@ impl JjWorkspace {
             }
         }
 
-        // Fall back to "main"
+        // Final fallback
         Ok("main".to_string())
     }
 

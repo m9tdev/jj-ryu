@@ -39,18 +39,14 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
         println!("Stack #{}: {}", i + 1, leaf_name);
         println!();
 
-        // Print trunk base
-        println!("  trunk()");
-        println!("    │");
-
-        // Print each segment
-        for segment in &stack.segments {
+        // Print each segment in reverse order (newest/leaf first, oldest last)
+        for segment in stack.segments.iter().rev() {
             let bookmark_names: Vec<&str> =
                 segment.bookmarks.iter().map(|b| b.name.as_str()).collect();
 
-            // Print commits in segment
+            // Print commits in segment (already newest-first from revset)
             for (j, change) in segment.changes.iter().enumerate() {
-                let is_last_in_segment = j == segment.changes.len() - 1;
+                let is_first_in_segment = j == 0;
                 let commit_short = &change.commit_id[..8.min(change.commit_id.len())];
                 let change_short = &change.change_id[..8.min(change.change_id.len())];
 
@@ -60,21 +56,20 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
                     &change.description_first_line
                 };
 
-                // Truncate description
+                // Truncate description (char-safe for UTF-8)
                 let max_desc = 50;
-                let desc_display = if desc.len() > max_desc {
-                    format!("{}...", &desc[..max_desc - 3])
+                let desc_display = if desc.chars().count() > max_desc {
+                    format!("{}...", desc.chars().take(max_desc - 3).collect::<String>())
                 } else {
                     desc.to_string()
                 };
 
                 let marker = if change.is_working_copy { "@" } else { "○" };
 
-                println!("    │");
-                println!("    {marker}  {change_short} {commit_short} {desc_display}");
-                if is_last_in_segment && !bookmark_names.is_empty() {
+                // Show bookmark on first commit of segment (the tip)
+                if is_first_in_segment && !bookmark_names.is_empty() {
                     for bm in &bookmark_names {
-                        let bookmark = &segment.bookmarks.iter().find(|b| b.name == *bm).unwrap();
+                        let bookmark = segment.bookmarks.iter().find(|b| b.name == *bm).unwrap();
                         let sync_status = if bookmark.is_synced {
                             " ✓"
                         } else if bookmark.has_remote {
@@ -82,12 +77,16 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
                         } else {
                             ""
                         };
-                        println!("    │  └─ [{bm}]{sync_status}");
+                        println!("       [{bm}]{sync_status}");
                     }
                 }
+                println!("    {marker}  {change_short} {commit_short} {desc_display}");
+                println!("    │");
             }
         }
 
+        // Print trunk base at bottom
+        println!("  trunk()");
         println!();
     }
 

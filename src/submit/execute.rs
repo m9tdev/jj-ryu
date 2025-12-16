@@ -42,10 +42,10 @@ struct StackItem {
     pr_number: u64,
 }
 
-const COMMENT_DATA_PREFIX: &str = "<!--- JJ-STACK_INFO: ";
+const COMMENT_DATA_PREFIX: &str = "<!--- JJ-RYU_STACK: ";
+const COMMENT_DATA_PREFIX_OLD: &str = "<!--- JJ-STACK_INFO: ";
 const COMMENT_DATA_POSTFIX: &str = " --->";
-const STACK_COMMENT_FOOTER: &str = "*Created with [jj-stack](https://github.com/keanemind/jj-stack)*";
-const STACK_COMMENT_THIS_PR: &str = "← this PR";
+const STACK_COMMENT_THIS_PR: &str = "👈";
 
 /// Execute a submission plan
 ///
@@ -274,29 +274,28 @@ async fn create_or_update_stack_comment(
         Error::Internal(format!("Failed to serialize stack data: {e}"))
     })?);
 
-    let mut body = format!(
-        "{COMMENT_DATA_PREFIX}{encoded_data}{COMMENT_DATA_POSTFIX}\nThis PR is part of a stack of {} bookmark{}:\n\n",
-        data.stack.len(),
-        if data.stack.len() == 1 { "" } else { "s" }
-    );
+    let mut body = format!("{COMMENT_DATA_PREFIX}{encoded_data}{COMMENT_DATA_POSTFIX}\n");
 
-    body.push_str("1. `trunk()`\n");
-
-    for (i, item) in data.stack.iter().enumerate() {
-        if i == current_idx {
-            let _ = writeln!(body, "1. **{} {STACK_COMMENT_THIS_PR}**", item.bookmark_name);
+    // Reverse order: newest/leaf at top, oldest at bottom
+    let reversed_idx = data.stack.len() - 1 - current_idx;
+    for (i, item) in data.stack.iter().rev().enumerate() {
+        if i == reversed_idx {
+            let _ = writeln!(body, "* **#{} {STACK_COMMENT_THIS_PR}**", item.pr_number);
         } else {
-            let _ = writeln!(body, "1. [{}]({})", item.bookmark_name, item.pr_url);
+            let _ = writeln!(body, "* [#{}]({})", item.pr_number, item.pr_url);
         }
     }
 
-    let _ = write!(body, "\n---\n{STACK_COMMENT_FOOTER}");
+    let _ = write!(
+        body,
+        "\n---\nThis stack of pull requests is managed by [jj-ryu](https://github.com/dmmulroy/jj-ryu)."
+    );
 
-    // Find existing comment by looking for our data prefix (more reliable than footer)
+    // Find existing comment by looking for our data prefix (check both old and new)
     let comments = platform.list_pr_comments(pr_number).await?;
     let existing = comments
         .iter()
-        .find(|c| c.body.contains(COMMENT_DATA_PREFIX));
+        .find(|c| c.body.contains(COMMENT_DATA_PREFIX) || c.body.contains(COMMENT_DATA_PREFIX_OLD));
 
     if let Some(comment) = existing {
         platform.update_pr_comment(pr_number, comment.id, &body).await?;

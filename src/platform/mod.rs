@@ -1,0 +1,45 @@
+//! Platform services for GitHub and GitLab
+//!
+//! Provides a unified interface for PR/MR operations across platforms.
+
+mod detection;
+mod factory;
+mod github;
+mod gitlab;
+
+pub use detection::{detect_platform, parse_repo_info};
+pub use factory::create_platform_service;
+pub use github::GitHubService;
+pub use gitlab::GitLabService;
+
+use crate::error::Result;
+use crate::types::{PlatformConfig, PrComment, PullRequest};
+use async_trait::async_trait;
+
+/// Platform service trait for PR/MR operations
+///
+/// This trait abstracts GitHub and GitLab operations, allowing the same
+/// submission logic to work with either platform.
+#[async_trait]
+pub trait PlatformService: Send + Sync {
+    /// Find an existing open PR for a head branch
+    async fn find_existing_pr(&self, head_branch: &str) -> Result<Option<PullRequest>>;
+
+    /// Create a new PR
+    async fn create_pr(&self, head: &str, base: &str, title: &str) -> Result<PullRequest>;
+
+    /// Update the base branch of an existing PR
+    async fn update_pr_base(&self, pr_number: u64, new_base: &str) -> Result<PullRequest>;
+
+    /// List comments on a PR
+    async fn list_pr_comments(&self, pr_number: u64) -> Result<Vec<PrComment>>;
+
+    /// Create a comment on a PR
+    async fn create_pr_comment(&self, pr_number: u64, body: &str) -> Result<()>;
+
+    /// Update an existing comment on a PR
+    async fn update_pr_comment(&self, pr_number: u64, comment_id: u64, body: &str) -> Result<()>;
+
+    /// Get the platform configuration
+    fn config(&self) -> &PlatformConfig;
+}

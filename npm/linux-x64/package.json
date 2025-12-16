@@ -1,0 +1,21 @@
+{
+  "name": "@jj-ryu/linux-x64",
+  "version": "0.1.0",
+  "description": "ryu binary for linux x64",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dillon/jj-ryu.git"
+  },
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "preferUnplugged": true,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

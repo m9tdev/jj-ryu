@@ -1,0 +1,477 @@
+//! `JjWorkspace` - wrapper around jj-lib for repository operations
+
+use crate::error::{Error, Result};
+use crate::types::{Bookmark, GitRemote, LogEntry};
+use chrono::{DateTime, TimeZone, Utc};
+use jj_lib::backend::Timestamp;
+use jj_lib::commit::Commit;
+use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
+use jj_lib::git::{self, GitFetch, GitRefUpdate, RemoteCallbacks};
+use jj_lib::op_store::{RemoteRef, RemoteRefState};
+use jj_lib::object_id::ObjectId;
+use jj_lib::ref_name::{RefName, RemoteName};
+use jj_lib::repo::{Repo, StoreFactories};
+use jj_lib::revset::{self, RevsetExtensions, RevsetParseContext, SymbolResolver};
+use jj_lib::settings::{GitSettings, UserSettings};
+use jj_lib::str_util::StringPattern;
+use jj_lib::workspace::{default_working_copy_factories, Workspace};
+use std::path::Path;
+use std::sync::Arc;
+
+/// Wrapper around jj-lib workspace and repository
+pub struct JjWorkspace {
+    workspace: Workspace,
+    settings: UserSettings,
+}
+
+/// Create `UserSettings` with defaults for read operations
+fn create_user_settings() -> Result<UserSettings> {
+    let mut config = StackedConfig::with_defaults();
+
+    // Add minimal user config - required by UserSettings::from_config
+    let mut user_layer = ConfigLayer::empty(ConfigSource::User);
+    user_layer
+        .set_value("user.name", "jj-ryu")
+        .map_err(|e| Error::Config(format!("Failed to set user.name: {e}")))?;
+    user_layer
+        .set_value("user.email", "jj-ryu@localhost")
+        .map_err(|e| Error::Config(format!("Failed to set user.email: {e}")))?;
+    config.add_layer(user_layer);
+
+    // Try to load actual user config file if it exists
+    let home = dirs::home_dir();
+    if let Some(ref home_dir) = home {
+        let jj_config = home_dir.join(".config").join("jj").join("config.toml");
+        if jj_config.exists() {
+            let _ = config.load_file(ConfigSource::User, &jj_config);
+        }
+    }
+
+    UserSettings::from_config(config)
+        .map_err(|e| Error::Config(format!("Failed to create settings: {e}")))
+}
+
+impl JjWorkspace {
+    /// Open a jj workspace at the given path
+    pub fn open(path: &Path) -> Result<Self> {
+        let settings = create_user_settings()?;
+
+        let workspace = Workspace::load(
+            &settings,
+            path,
+            &StoreFactories::default(),
+            &default_working_copy_factories(),
+        )
+        .map_err(|e| Error::Workspace(format!("Failed to open workspace: {e}")))?;
+
+        Ok(Self {
+            workspace,
+            settings,
+        })
+    }
+
+    /// Get the readonly repo at head operation
+    fn repo(&self) -> Result<Arc<jj_lib::repo::ReadonlyRepo>> {
+        self.workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Workspace(format!("Failed to load repo: {e}")))
+    }
+
+    /// Get git settings from user settings
+    fn git_settings(&self) -> GitSettings {
+        GitSettings::from_settings(&self.settings).unwrap_or_default()
+    }
+
+    /// Get all local bookmarks
+    pub fn local_bookmarks(&self) -> Result<Vec<Bookmark>> {
+        let repo = self.repo()?;
+        let view = repo.view();
+
+        let mut bookmarks = Vec::new();
+        for (name, target) in view.local_bookmarks() {
+            if let Some(commit_id) = target.as_normal() {
+                let commit = repo
+                    .store()
+                    .get_commit(commit_id)
+                    .map_err(|e| Error::Workspace(format!("Failed to get commit: {e}")))?;
+
+                // Check if bookmark has remote tracking
+                let name_pattern = StringPattern::exact(name.as_str());
+                let remote_pattern = StringPattern::everything();
+                let has_remote = view
+                    .remote_bookmarks_matching(&name_pattern, &remote_pattern)
+                    .next()
+                    .is_some();
+
+                // Check if synced with remote (any remote)
+                let is_synced = view
+                    .remote_bookmarks_matching(&name_pattern, &remote_pattern)
+                    .any(|(_, remote_ref)| {
+                        remote_ref.target.as_normal().is_some_and(|id| id == commit_id)
+                    });
+
+                bookmarks.push(Bookmark {
+                    name: name.as_str().to_string(),
+                    commit_id: commit_id.hex(),
+                    change_id: commit.change_id().hex(),
+                    has_remote,
+                    is_synced,
+                });
+            }
+        }
+
+        Ok(bookmarks)
+    }
+
+    /// Get a specific local bookmark
+    pub fn get_local_bookmark(&self, name: &str) -> Result<Option<Bookmark>> {
+        let repo = self.repo()?;
+        let view = repo.view();
+
+        let ref_name = RefName::new(name);
+        let target = view.get_local_bookmark(ref_name);
+
+        if !target.is_present() {
+            return Ok(None);
+        }
+
+        let Some(commit_id) = target.as_normal() else {
+            return Ok(None);
+        };
+
+        let commit = repo
+            .store()
+            .get_commit(commit_id)
+            .map_err(|e| Error::Workspace(format!("Failed to get commit: {e}")))?;
+
+        let name_pattern = StringPattern::exact(name);
+        let remote_pattern = StringPattern::everything();
+        let has_remote = view
+            .remote_bookmarks_matching(&name_pattern, &remote_pattern)
+            .next()
+            .is_some();
+
+        let is_synced = view
+            .remote_bookmarks_matching(&name_pattern, &remote_pattern)
+            .any(|(_, remote_ref)| {
+                remote_ref.target.as_normal().is_some_and(|id| id == commit_id)
+            });
+
+        Ok(Some(Bookmark {
+            name: name.to_string(),
+            commit_id: commit_id.hex(),
+            change_id: commit.change_id().hex(),
+            has_remote,
+            is_synced,
+        }))
+    }
+
+    /// Get a remote bookmark
+    pub fn get_remote_bookmark(&self, name: &str, remote: &str) -> Result<Option<Bookmark>> {
+        let repo = self.repo()?;
+        let view = repo.view();
+
+        let ref_name = RefName::new(name);
+        let remote_name = RemoteName::new(remote);
+        let symbol = ref_name.to_remote_symbol(remote_name);
+        let remote_ref = view.get_remote_bookmark(symbol);
+
+        if !remote_ref.target.is_present() {
+            return Ok(None);
+        }
+
+        let Some(commit_id) = remote_ref.target.as_normal() else {
+            return Ok(None);
+        };
+
+        let commit = repo
+            .store()
+            .get_commit(commit_id)
+            .map_err(|e| Error::Workspace(format!("Failed to get commit: {e}")))?;
+
+        Ok(Some(Bookmark {
+            name: name.to_string(),
+            commit_id: commit_id.hex(),
+            change_id: commit.change_id().hex(),
+            has_remote: true,
+            is_synced: true,
+        }))
+    }
+
+    /// Resolve a revset expression to commits
+    pub fn resolve_revset(&self, expr: &str) -> Result<Vec<LogEntry>> {
+        let repo = self.repo()?;
+
+        // Parse and evaluate the revset
+        let extensions = RevsetExtensions::default();
+        let aliases = revset::RevsetAliasesMap::default();
+        let date_context = jj_lib::time_util::DatePatternContext::Local(chrono::Local::now());
+
+        let context = RevsetParseContext {
+            aliases_map: &aliases,
+            local_variables: std::collections::HashMap::new(),
+            user_email: self.settings.user_email(),
+            date_pattern_context: date_context,
+            extensions: &extensions,
+            workspace: None,
+        };
+
+        let mut diagnostics = revset::RevsetDiagnostics::new();
+        let expression = revset::parse(&mut diagnostics, expr, &context)
+            .map_err(|e| Error::Parse(format!("Failed to parse revset: {e}")))?;
+
+        let empty_extensions: &[Box<dyn jj_lib::revset::SymbolResolverExtension>] = &[];
+        let symbol_resolver = SymbolResolver::new(repo.as_ref(), empty_extensions);
+        let resolved = expression
+            .resolve_user_expression(repo.as_ref(), &symbol_resolver)
+            .map_err(|e| Error::Revset(format!("Failed to resolve revset: {e}")))?;
+
+        let revset = resolved
+            .evaluate(repo.as_ref())
+            .map_err(|e| Error::Revset(format!("Failed to evaluate revset: {e}")))?;
+
+        let mut entries = Vec::new();
+        for commit_id in revset.iter() {
+            let commit_id = commit_id
+                .map_err(|e| Error::Revset(format!("Failed to iterate revset: {e}")))?;
+            let commit = repo
+                .store()
+                .get_commit(&commit_id)
+                .map_err(|e| Error::Workspace(format!("Failed to get commit: {e}")))?;
+
+            entries.push(Self::commit_to_log_entry(&repo, &commit));
+        }
+
+        Ok(entries)
+    }
+
+    /// Convert a jj commit to a `LogEntry`
+    fn commit_to_log_entry(
+        repo: &Arc<jj_lib::repo::ReadonlyRepo>,
+        commit: &Commit,
+    ) -> LogEntry {
+        let view = repo.view();
+
+        // Get bookmarks pointing to this commit
+        let local_bookmarks: Vec<String> = view
+            .local_bookmarks_for_commit(commit.id())
+            .map(|(name, _)| name.as_str().to_string())
+            .collect();
+
+        let remote_bookmarks: Vec<String> = view
+            .all_remote_bookmarks()
+            .filter(|(_, remote_ref)| {
+                remote_ref.target.as_normal().is_some_and(|id| id == commit.id())
+            })
+            .map(|(symbol, _)| format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str()))
+            .collect();
+
+        // Get parents
+        let parents: Vec<String> = commit.parent_ids().iter().map(ObjectId::hex).collect();
+
+        // Get description first line
+        let description = commit.description();
+        let description_first_line = description.lines().next().unwrap_or("").to_string();
+
+        // Get timestamps
+        let author = commit.author();
+        let committer = commit.committer();
+
+        let authored_at = timestamp_to_datetime(&author.timestamp);
+        let committed_at = timestamp_to_datetime(&committer.timestamp);
+
+        // Check if this is the working copy
+        let is_working_copy = repo
+            .view()
+            .wc_commit_ids()
+            .values()
+            .any(|id| id == commit.id());
+
+        LogEntry {
+            commit_id: commit.id().hex(),
+            change_id: commit.change_id().hex(),
+            author_name: author.name.clone(),
+            author_email: author.email.clone(),
+            description_first_line,
+            parents,
+            local_bookmarks,
+            remote_bookmarks,
+            is_working_copy,
+            authored_at,
+            committed_at,
+        }
+    }
+
+    /// Get all git remotes
+    pub fn git_remotes(&self) -> Result<Vec<GitRemote>> {
+        let repo = self.repo()?;
+
+        let remote_names = git::get_all_remote_names(repo.store())
+            .map_err(|_| Error::Git("Not a git-backed repo".to_string()))?;
+
+        // Get the git repo for URL lookup
+        let git_repo = git::get_git_repo(repo.store())
+            .map_err(|_| Error::Git("Not a git-backed repo".to_string()))?;
+
+        let mut remotes = Vec::new();
+        for name in remote_names {
+            // Get the URL - try_find_remote returns Option<Result<Remote, Error>>
+            let url = git_repo
+                .try_find_remote(name.as_str())
+                .and_then(std::result::Result::ok)
+                .and_then(|remote: gix::Remote<'_>| {
+                    remote
+                        .url(gix::remote::Direction::Push)
+                        .map(|u| u.to_bstring().to_string())
+                })
+                .unwrap_or_default();
+
+            remotes.push(GitRemote {
+                name: name.as_str().to_string(),
+                url,
+            });
+        }
+
+        Ok(remotes)
+    }
+
+    /// Fetch from a git remote
+    pub fn git_fetch(&mut self, remote: &str) -> Result<()> {
+        let repo = self.repo()?;
+        let git_settings = self.git_settings();
+
+        // Start a transaction for the fetch
+        let mut tx = repo.start_transaction();
+
+        let mut fetch = GitFetch::new(tx.repo_mut(), &git_settings)
+            .map_err(|e| Error::Git(format!("Failed to create fetch: {e}")))?;
+
+        let remote_name = RemoteName::new(remote);
+        fetch
+            .fetch(
+                remote_name,
+                &[StringPattern::everything()],
+                RemoteCallbacks::default(),
+                None,
+            )
+            .map_err(|e| Error::Git(format!("Failed to fetch: {e}")))?;
+
+        // Import the fetched refs
+        fetch
+            .import_refs()
+            .map_err(|e| Error::Git(format!("Failed to import refs: {e}")))?;
+
+        // Commit the transaction
+        tx.commit(format!("fetch from {remote}"))
+            .map_err(|e| Error::Git(format!("Failed to commit fetch: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Push a bookmark to a remote
+    pub fn git_push(&mut self, bookmark: &str, remote: &str) -> Result<()> {
+        let repo = self.repo()?;
+        let git_settings = self.git_settings();
+
+        // Get the local bookmark target
+        let view = repo.view();
+        let ref_name = RefName::new(bookmark);
+        let target = view.get_local_bookmark(ref_name);
+
+        if !target.is_present() {
+            return Err(Error::BookmarkNotFound(bookmark.to_string()));
+        }
+
+        let new_target = target.as_normal().cloned();
+
+        // Get expected current target from remote tracking
+        let remote_name = RemoteName::new(remote);
+        let remote_symbol = ref_name.to_remote_symbol(remote_name);
+        let remote_ref = view.get_remote_bookmark(remote_symbol);
+        let expected_current_target = remote_ref.target.as_normal().cloned();
+
+        // Build the update for pushing
+        let update = GitRefUpdate {
+            qualified_name: format!("refs/heads/{bookmark}").into(),
+            expected_current_target,
+            new_target,
+        };
+
+        git::push_updates(
+            repo.as_ref(),
+            &git_settings,
+            remote_name,
+            &[update],
+            RemoteCallbacks::default(),
+        )
+        .map_err(|e| Error::Git(format!("Failed to push: {e}")))?;
+
+        // Start a transaction to update remote tracking ref
+        let mut tx = repo.start_transaction();
+
+        // Update the remote tracking ref to match what we just pushed
+        // This ensures the bookmark shows as "synced" after push
+        let remote_ref = RemoteRef {
+            target: target.clone(),
+            state: RemoteRefState::Tracked,
+        };
+        tx.repo_mut().set_remote_bookmark(remote_symbol, remote_ref);
+
+        tx.commit(format!("push {bookmark} to {remote}"))
+            .map_err(|e| Error::Git(format!("Failed to commit push: {e}")))?;
+
+        Ok(())
+    }
+
+    /// Get the default branch name (main/master)
+    pub fn default_branch(&self) -> Result<String> {
+        let repo = self.repo()?;
+        let view = repo.view();
+
+        // Try common default branch names
+        for name in &["main", "master", "trunk"] {
+            let target = view.get_local_bookmark(RefName::new(name));
+            if target.is_present() {
+                return Ok((*name).to_string());
+            }
+        }
+
+        // Fall back to "main"
+        Ok("main".to_string())
+    }
+
+    /// Get the workspace root path
+    pub fn workspace_root(&self) -> &Path {
+        self.workspace.workspace_root()
+    }
+}
+
+/// Convert jj timestamp to chrono `DateTime`
+fn timestamp_to_datetime(ts: &Timestamp) -> DateTime<Utc> {
+    Utc.timestamp_millis_opt(ts.timestamp.0)
+        .single()
+        .unwrap_or_else(Utc::now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_timestamp_to_datetime() {
+        let ts = Timestamp {
+            timestamp: jj_lib::backend::MillisSinceEpoch(1_700_000_000_000),
+            tz_offset: 0,
+        };
+        let dt = timestamp_to_datetime(&ts);
+        assert_eq!(dt.timestamp_millis(), 1_700_000_000_000);
+    }
+
+    #[test]
+    fn test_create_user_settings() {
+        // Should not panic even without user config
+        let settings = create_user_settings();
+        assert!(settings.is_ok());
+    }
+}

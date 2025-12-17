@@ -7,13 +7,13 @@ Stacked PRs for [Jujutsu](https://jj-vcs.github.io/jj/latest/). Push bookmark st
 
 ```
        [feat-c]
-    @  ○○○○ Add logout       ──►   PR #3: feat-c → feat-b
+    @  mzpwwxkq a1b2c3d4 Add logout       ──►   PR #3: feat-c → feat-b
     │
        [feat-b]
-    ○  ○○○○ Add sessions     ──►   PR #2: feat-b → feat-a
+    ○  yskvutnz e5f6a7b8 Add sessions     ──►   PR #2: feat-b → feat-a
     │
        [feat-a]
-    ○  ○○○○ Add auth         ──►   PR #1: feat-a → main
+    ○  kpqvunts 9d8c7b6a Add auth         ──►   PR #1: feat-a → main
     │
   trunk()
 ```
@@ -116,18 +116,18 @@ Created 2 PRs
 
 ### Stack comments
 
-Each PR gets a comment showing the full stack with status indicators:
+Each PR gets a comment showing the full stack:
 
 ```
-* 🟢 feat-c #13
-* 🟢 feat-b #12 👈
-* 🟣 feat-a #11
+* #13
+* **#12 👈**
+* #11
 
 ---
-This stack is managed by jj-ryu.
+This stack of pull requests is managed by jj-ryu.
 ```
 
-GitHub/GitLab auto-link PR references and show status: 🟢 open, 🟣 merged, 🔴 closed, ⚫ draft.
+GitHub/GitLab auto-link `#X` references and show status indicators (open, merged, closed, draft).
 
 Comments update automatically when you re-submit.
 

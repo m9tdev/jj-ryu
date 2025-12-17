@@ -62,7 +62,7 @@ struct TestContext {
 }
 
 impl TestContext {
-    async fn new() -> Option<Self> {
+    fn new() -> Option<Self> {
         if !e2e_enabled() {
             return None;
         }
@@ -86,17 +86,19 @@ impl TestContext {
     }
 
     /// Push a branch with a test file via GitHub API
+    #[allow(clippy::unused_self)] // kept as method for consistency
     fn push_branch(&self, branch: &str, content: &str) -> bool {
-        self.push_branch_impl(branch, "main", content)
+        Self::push_branch_impl(branch, "main", content)
     }
 
     /// Push a branch based on another branch
+    #[allow(clippy::unused_self)] // kept as method for consistency
     fn push_branch_on_base(&self, branch: &str, base_branch: &str, content: &str) -> bool {
-        self.push_branch_impl(branch, base_branch, content)
+        Self::push_branch_impl(branch, base_branch, content)
     }
 
     /// Core implementation for pushing a branch
-    fn push_branch_impl(&self, branch: &str, base_ref: &str, content: &str) -> bool {
+    fn push_branch_impl(branch: &str, base_ref: &str, content: &str) -> bool {
         let repo_spec = repo_spec();
 
         let base_sha = gh_api_get(
@@ -166,7 +168,7 @@ impl TestContext {
         .is_some()
     }
 
-    async fn cleanup(&self) {
+    fn cleanup(&self) {
         cleanup_branches_and_prs(&self.created_branches, &self.created_prs);
     }
 }
@@ -278,12 +280,8 @@ impl E2ERepo {
     fn build_stack(&mut self, commits: &[(&str, &str)]) -> Vec<String> {
         let mut bookmarks = vec![];
         for (bookmark, message) in commits {
-            if !self.create_commit(message) {
-                panic!("Failed to create commit: {message}");
-            }
-            if !self.create_bookmark(bookmark) {
-                panic!("Failed to create bookmark: {bookmark}");
-            }
+            assert!(self.create_commit(message), "Failed to create commit: {message}");
+            assert!(self.create_bookmark(bookmark), "Failed to create bookmark: {bookmark}");
             bookmarks.push(format!("{}-{bookmark}", self.prefix));
         }
         bookmarks
@@ -514,7 +512,7 @@ fn cleanup_branches_and_prs(branches: &[String], prs: &[u64]) {
 
 #[tokio::test]
 async fn test_github_service_config() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
         return;
     };
@@ -527,7 +525,7 @@ async fn test_github_service_config() {
 
 #[tokio::test]
 async fn test_find_nonexistent_pr() {
-    let Some(ctx) = TestContext::new().await else {
+    let Some(ctx) = TestContext::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
         return;
     };
@@ -546,9 +544,9 @@ async fn test_find_nonexistent_pr() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_create_and_find_pr() {
-    let Some(mut ctx) = TestContext::new().await else {
+    let Some(mut ctx) = TestContext::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
         return;
     };
@@ -579,13 +577,13 @@ async fn test_create_and_find_pr() {
     assert!(found.is_some());
     assert_eq!(found.unwrap().number, pr.number);
 
-    ctx.cleanup().await;
+    ctx.cleanup();
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_update_pr_base() {
-    let Some(mut ctx) = TestContext::new().await else {
+    let Some(mut ctx) = TestContext::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
         return;
     };
@@ -622,13 +620,13 @@ async fn test_update_pr_base() {
 
     assert_eq!(updated.base_ref, "main");
 
-    ctx.cleanup().await;
+    ctx.cleanup();
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_pr_comments() {
-    let Some(mut ctx) = TestContext::new().await else {
+    let Some(mut ctx) = TestContext::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
         return;
     };
@@ -667,13 +665,13 @@ async fn test_pr_comments() {
     let comments = ctx.service.list_pr_comments(pr.number).await.unwrap();
     assert_eq!(comments[0].body, "Updated");
 
-    ctx.cleanup().await;
+    ctx.cleanup();
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_pr_stack_rebase() {
-    let Some(mut ctx) = TestContext::new().await else {
+    let Some(mut ctx) = TestContext::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
         return;
     };
@@ -720,7 +718,7 @@ async fn test_pr_stack_rebase() {
         .expect("update B");
     assert_eq!(updated_b.base_ref, "main");
 
-    ctx.cleanup().await;
+    ctx.cleanup();
 }
 
 // =============================================================================
@@ -728,7 +726,7 @@ async fn test_pr_stack_rebase() {
 // =============================================================================
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_submit_new_stack() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -761,7 +759,7 @@ async fn test_submit_new_stack() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_submit_partial_stack() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -795,7 +793,7 @@ async fn test_submit_partial_stack() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_submit_idempotent() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -830,7 +828,7 @@ async fn test_submit_idempotent() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_stack_comments() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -897,7 +895,7 @@ async fn test_stack_comments() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_deep_stack() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -923,7 +921,7 @@ async fn test_deep_stack() {
     // Verify all 5 PRs created with correct chaining
     let mut prev_bookmark = "main".to_string();
     for bookmark in &bookmarks {
-        let pr_num = find_pr_number(bookmark).expect(&format!("PR for {bookmark} not found"));
+        let pr_num = find_pr_number(bookmark).unwrap_or_else(|| panic!("PR for {bookmark} not found"));
         let base = get_pr_base(pr_num).expect("get base");
         assert_eq!(base, prev_bookmark, "Wrong base for {bookmark}");
         prev_bookmark = bookmark.clone();
@@ -933,7 +931,7 @@ async fn test_deep_stack() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_sync_after_merge() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -990,7 +988,7 @@ async fn test_sync_after_merge() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_sync_multiple_stacks_updates_bases() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");
@@ -1071,7 +1069,7 @@ async fn test_sync_multiple_stacks_updates_bases() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "E2E test requiring JJ_RYU_E2E_TESTS=1"]
 async fn test_submit_dry_run() {
     let Some(mut repo) = E2ERepo::new() else {
         eprintln!("Skipping: set JJ_RYU_E2E_TESTS=1");

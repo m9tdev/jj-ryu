@@ -13,23 +13,23 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Call record for create_pr
-#[derive(Debug, Clone, PartialEq)]
+/// Call record for `create_pr`
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatePrCall {
     pub head: String,
     pub base: String,
     pub title: String,
 }
 
-/// Call record for update_pr_base
-#[derive(Debug, Clone, PartialEq)]
+/// Call record for `update_pr_base`
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateBaseCall {
     pub pr_number: u64,
     pub new_base: String,
 }
 
-/// Call record for create_pr_comment
-#[derive(Debug, Clone, PartialEq)]
+/// Call record for `create_pr_comment`
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateCommentCall {
     pub pr_number: u64,
     pub body: String,
@@ -37,7 +37,7 @@ pub struct CreateCommentCall {
 
 /// Simple mock platform service for testing
 ///
-/// This manually implements PlatformService rather than using mockall,
+/// This manually implements `PlatformService` rather than using mockall,
 /// because mockall has issues with methods returning references.
 ///
 /// Features:
@@ -83,22 +83,22 @@ impl MockPlatformService {
 
     // === Error injection methods ===
 
-    /// Make find_existing_pr return an error
+    /// Make `find_existing_pr` return an error
     pub fn fail_find_pr(&self, msg: &str) {
         *self.error_on_find_pr.lock().unwrap() = Some(msg.to_string());
     }
 
-    /// Make create_pr return an error
+    /// Make `create_pr` return an error
     pub fn fail_create_pr(&self, msg: &str) {
         *self.error_on_create_pr.lock().unwrap() = Some(msg.to_string());
     }
 
-    /// Make update_pr_base return an error
+    /// Make `update_pr_base` return an error
     pub fn fail_update_base(&self, msg: &str) {
         *self.error_on_update_base.lock().unwrap() = Some(msg.to_string());
     }
 
-    /// Set the response for find_existing_pr for a specific branch
+    /// Set the response for `find_existing_pr` for a specific branch
     pub fn set_find_pr_response(&self, branch: &str, pr: Option<PullRequest>) {
         self.find_pr_responses
             .lock()
@@ -106,7 +106,7 @@ impl MockPlatformService {
             .insert(branch.to_string(), pr);
     }
 
-    /// Set the response for list_pr_comments for a specific PR
+    /// Set the response for `list_pr_comments` for a specific PR
     pub fn set_list_comments_response(&self, pr_number: u64, comments: Vec<PrComment>) {
         self.list_comments_responses
             .lock()
@@ -116,43 +116,43 @@ impl MockPlatformService {
 
     // === Call verification methods ===
 
-    /// Get all branches that find_existing_pr was called with
+    /// Get all branches that `find_existing_pr` was called with
     pub fn get_find_pr_calls(&self) -> Vec<String> {
         self.find_pr_calls.lock().unwrap().clone()
     }
 
-    /// Get all create_pr calls
+    /// Get all `create_pr` calls
     pub fn get_create_pr_calls(&self) -> Vec<CreatePrCall> {
         self.create_pr_calls.lock().unwrap().clone()
     }
 
-    /// Get all update_pr_base calls
+    /// Get all `update_pr_base` calls
     pub fn get_update_base_calls(&self) -> Vec<UpdateBaseCall> {
         self.update_base_calls.lock().unwrap().clone()
     }
 
-    /// Get all create_pr_comment calls
+    /// Get all `create_pr_comment` calls
     pub fn get_create_comment_calls(&self) -> Vec<CreateCommentCall> {
         self.create_comment_calls.lock().unwrap().clone()
     }
 
-    /// Get all list_pr_comments calls
+    /// Get all `list_pr_comments` calls
     pub fn get_list_comments_calls(&self) -> Vec<u64> {
         self.list_comments_calls.lock().unwrap().clone()
     }
 
-    /// Assert that create_pr was called with specific head and base
+    /// Assert that `create_pr` was called with specific head and base
     pub fn assert_create_pr_called(&self, head: &str, base: &str) {
-        let calls = self.create_pr_calls.lock().unwrap();
+        let calls = self.get_create_pr_calls();
         assert!(
             calls.iter().any(|c| c.head == head && c.base == base),
             "Expected create_pr({head}, {base}) but got: {calls:?}"
         );
     }
 
-    /// Assert that update_pr_base was called with specific args
+    /// Assert that `update_pr_base` was called with specific args
     pub fn assert_update_base_called(&self, pr_number: u64, new_base: &str) {
-        let calls = self.update_base_calls.lock().unwrap();
+        let calls = self.get_update_base_calls();
         assert!(
             calls
                 .iter()
@@ -161,9 +161,9 @@ impl MockPlatformService {
         );
     }
 
-    /// Assert that find_existing_pr was called for each bookmark
+    /// Assert that `find_existing_pr` was called for each bookmark
     pub fn assert_find_pr_called_for(&self, branches: &[&str]) {
-        let calls = self.find_pr_calls.lock().unwrap();
+        let calls = self.get_find_pr_calls();
         for branch in branches {
             assert!(
                 calls.contains(&branch.to_string()),

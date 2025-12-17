@@ -1,5 +1,7 @@
 //! Integration tests for jj-ryu
 
+#![allow(deprecated)] // cargo_bin is the standard way to test CLI binaries
+
 mod common;
 
 use assert_cmd::Command;

@@ -28,8 +28,8 @@ impl TempJjRepo {
 
         assert!(
             output.status.success(),
-            "jj git init failed at {:?}: {}",
-            dir.path(),
+            "jj git init failed at {}: {}",
+            dir.path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
 
@@ -42,8 +42,8 @@ impl TempJjRepo {
 
         assert!(
             output.status.success(),
-            "jj commit failed at {:?}: {}",
-            dir.path(),
+            "jj commit failed at {}: {}",
+            dir.path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
 
@@ -58,7 +58,7 @@ impl TempJjRepo {
     /// Open as `JjWorkspace` for use with jj-ryu
     pub fn workspace(&self) -> JjWorkspace {
         JjWorkspace::open(self.dir.path())
-            .unwrap_or_else(|e| panic!("failed to open workspace at {:?}: {e}", self.dir.path()))
+            .unwrap_or_else(|e| panic!("failed to open workspace at {}: {e}", self.dir.path().display()))
     }
 
     /// Create a new commit with the given message
@@ -71,9 +71,9 @@ impl TempJjRepo {
 
         assert!(
             output.status.success(),
-            "jj commit -m {:?} failed at {:?}: {}",
+            "jj commit -m {:?} failed at {}: {}",
             message,
-            self.dir.path(),
+            self.dir.path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -88,16 +88,16 @@ impl TempJjRepo {
 
         assert!(
             output.status.success(),
-            "jj bookmark create {:?} failed at {:?}: {}",
+            "jj bookmark create {:?} failed at {}: {}",
             name,
-            self.dir.path(),
+            self.dir.path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
     }
 
     /// Build a linear stack of commits with bookmarks
     ///
-    /// Each tuple is (bookmark_name, commit_message).
+    /// Each tuple is (`bookmark_name`, `commit_message`).
     /// Creates commits in order, each on top of the previous.
     pub fn build_stack(&self, bookmarks: &[(&str, &str)]) {
         for (bookmark, message) in bookmarks {

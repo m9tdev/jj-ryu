@@ -150,8 +150,8 @@ pub fn make_linear_stack(names: &[&str]) -> ChangeGraph {
         bookmark_to_change_id,
         bookmarked_change_adjacency_list: adjacency,
         bookmarked_change_id_to_segment: change_to_segment,
-        stack_leafs: [leaf_id].into_iter().collect(),
-        stack_roots: [root_id].into_iter().collect(),
+        stack_leafs: std::iter::once(leaf_id).collect(),
+        stack_roots: std::iter::once(root_id).collect(),
         stacks: vec![BranchStack { segments }],
         excluded_bookmark_count: 0,
     }
@@ -195,8 +195,8 @@ pub fn make_multi_bookmark_segment(names: &[&str]) -> ChangeGraph {
         bookmark_to_change_id,
         bookmarked_change_adjacency_list: HashMap::new(),
         bookmarked_change_id_to_segment: change_to_segment,
-        stack_leafs: [change_id.clone()].into_iter().collect(),
-        stack_roots: [change_id].into_iter().collect(),
+        stack_leafs: std::iter::once(change_id.clone()).collect(),
+        stack_roots: std::iter::once(change_id).collect(),
         stacks: vec![BranchStack {
             segments: vec![segment],
         }],

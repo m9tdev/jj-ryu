@@ -208,9 +208,9 @@ async fn build_analysis(
 
         SubmitScope::Upto => {
             // Handle --upto: truncate at specified bookmark
-            let upto_bookmark = options
-                .upto_bookmark
-                .ok_or_else(|| Error::InvalidArgument("--upto requires a bookmark name".to_string()))?;
+            let upto_bookmark = options.upto_bookmark.ok_or_else(|| {
+                Error::InvalidArgument("--upto requires a bookmark name".to_string())
+            })?;
 
             let upto_idx = analysis
                 .segments
@@ -396,8 +396,14 @@ fn interactive_select(analysis: &SubmissionAnalysis) -> Result<Vec<String>> {
     // Validate selection is contiguous (no gaps).
     // A contiguous selection has span == count: max - min + 1 == len
     if !selections.is_empty() {
-        let min_idx = *selections.iter().min().expect("selections verified non-empty");
-        let max_idx = *selections.iter().max().expect("selections verified non-empty");
+        let min_idx = *selections
+            .iter()
+            .min()
+            .expect("selections verified non-empty");
+        let max_idx = *selections
+            .iter()
+            .max()
+            .expect("selections verified non-empty");
         let span = max_idx - min_idx + 1;
 
         if span != selections.len() {

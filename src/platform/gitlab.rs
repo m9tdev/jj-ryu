@@ -246,7 +246,11 @@ impl PlatformService for GitLabService {
                 body: n.body,
             })
             .collect();
-        debug!(mr_iid = pr_number, count = comments.len(), "listed MR comments");
+        debug!(
+            mr_iid = pr_number,
+            count = comments.len(),
+            "listed MR comments"
+        );
         Ok(comments)
     }
 

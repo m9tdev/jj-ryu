@@ -45,6 +45,13 @@ regex = "1"
 tracing = "0.1"
 dialoguer = "0.11"
 
+# CLI styling
+owo-colors = { version = "4", features = ["supports-colors"] }
+anstream = "0.6"
+indicatif = "0.17"
+terminal-link = "0.1"
+supports-hyperlinks = "3"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"

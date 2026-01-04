@@ -1,26 +1,50 @@
 //! Auth command - test and manage authentication
 
+use crate::cli::style::{check, spinner_style, Stylize};
+use anstream::println;
+use indicatif::ProgressBar;
 use jj_ryu::auth::{get_github_auth, get_gitlab_auth, test_github_auth, test_gitlab_auth};
 use jj_ryu::error::Result;
 use jj_ryu::types::Platform;
+use std::time::Duration;
 
 /// Run the auth test command
 pub async fn run_auth_test(platform: Platform) -> Result<()> {
     match platform {
         Platform::GitHub => {
-            println!("Testing GitHub authentication...");
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(spinner_style());
+            spinner.set_message("Testing GitHub authentication...");
+            spinner.enable_steady_tick(Duration::from_millis(80));
+
             let config = get_github_auth().await?;
             let username = test_github_auth(&config).await?;
-            println!("Authenticated as: {username}");
-            println!("Token source: {:?}", config.source);
+
+            spinner.finish_and_clear();
+            println!(
+                "{} Authenticated as: {}",
+                check(),
+                username.accent()
+            );
+            println!("  {} {:?}", "Token source:".muted(), config.source);
         }
         Platform::GitLab => {
-            println!("Testing GitLab authentication...");
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(spinner_style());
+            spinner.set_message("Testing GitLab authentication...");
+            spinner.enable_steady_tick(Duration::from_millis(80));
+
             let config = get_gitlab_auth(None).await?;
             let username = test_gitlab_auth(&config).await?;
-            println!("Authenticated as: {username}");
-            println!("Token source: {:?}", config.source);
-            println!("Host: {}", config.host);
+
+            spinner.finish_and_clear();
+            println!(
+                "{} Authenticated as: {}",
+                check(),
+                username.accent()
+            );
+            println!("  {} {:?}", "Token source:".muted(), config.source);
+            println!("  {} {}", "Host:".muted(), config.host);
         }
     }
     Ok(())
@@ -30,32 +54,44 @@ pub async fn run_auth_test(platform: Platform) -> Result<()> {
 pub fn run_auth_setup(platform: Platform) {
     match platform {
         Platform::GitHub => {
-            println!("GitHub Authentication Setup");
-            println!("===========================");
+            println!("{}", "GitHub Authentication Setup".emphasis());
             println!();
-            println!("Option 1: GitHub CLI (recommended)");
-            println!("  Install: https://cli.github.com/");
-            println!("  Run: gh auth login");
+            println!("{}", "Option 1: GitHub CLI (recommended)".emphasis());
+            println!("  Install: {}", "https://cli.github.com/".accent());
+            println!("  Run: {}", "gh auth login".accent());
             println!();
-            println!("Option 2: Environment variable");
-            println!("  Set GITHUB_TOKEN or GH_TOKEN");
+            println!("{}", "Option 2: Environment variable".emphasis());
+            println!(
+                "  Set {} or {}",
+                "GITHUB_TOKEN".accent(),
+                "GH_TOKEN".accent()
+            );
             println!();
-            println!("For GitHub Enterprise:");
-            println!("  Set GH_HOST to your instance hostname");
+            println!("{}", "For GitHub Enterprise:".muted());
+            println!("  {}", "Set GH_HOST to your instance hostname".muted());
         }
         Platform::GitLab => {
-            println!("GitLab Authentication Setup");
-            println!("===========================");
+            println!("{}", "GitLab Authentication Setup".emphasis());
             println!();
-            println!("Option 1: GitLab CLI (glab)");
-            println!("  Install: https://gitlab.com/gitlab-org/cli");
-            println!("  Run: glab auth login");
+            println!("{}", "Option 1: GitLab CLI (glab)".emphasis());
+            println!(
+                "  Install: {}",
+                "https://gitlab.com/gitlab-org/cli".accent()
+            );
+            println!("  Run: {}", "glab auth login".accent());
             println!();
-            println!("Option 2: Environment variable");
-            println!("  Set GITLAB_TOKEN or GL_TOKEN");
+            println!("{}", "Option 2: Environment variable".emphasis());
+            println!(
+                "  Set {} or {}",
+                "GITLAB_TOKEN".accent(),
+                "GL_TOKEN".accent()
+            );
             println!();
-            println!("For self-hosted GitLab:");
-            println!("  Set GITLAB_HOST to your instance hostname");
+            println!("{}", "For self-hosted GitLab:".muted());
+            println!(
+                "  {}",
+                "Set GITLAB_HOST to your instance hostname".muted()
+            );
         }
     }
 }
@@ -69,7 +105,10 @@ pub async fn run_auth(platform: Platform, action: &str) -> Result<()> {
             Ok(())
         }
         _ => {
-            println!("Unknown action: {action}. Use 'test' or 'setup'.");
+            println!(
+                "{}",
+                format!("Unknown action: {action}. Use 'test' or 'setup'.").muted()
+            );
             Ok(())
         }
     }

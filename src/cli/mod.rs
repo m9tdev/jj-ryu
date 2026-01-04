@@ -5,6 +5,7 @@
 mod analyze;
 mod auth;
 mod progress;
+pub mod style;
 mod submit;
 mod sync;
 

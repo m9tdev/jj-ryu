@@ -1,16 +1,20 @@
 //! Sync command - sync all stacks with remote
 
+use crate::cli::style::{arrow, check, spinner_style, Stylize, CHECK};
 use crate::cli::CliProgress;
+use anstream::println;
 use dialoguer::Confirm;
+use indicatif::ProgressBar;
 use jj_ryu::error::{Error, Result};
 use jj_ryu::graph::build_change_graph;
 use jj_ryu::platform::{create_platform_service, parse_repo_info};
-use jj_ryu::repo::{JjWorkspace, select_remote};
+use jj_ryu::repo::{select_remote, JjWorkspace};
 use jj_ryu::submit::{
-    SubmissionPlan, analyze_submission, create_submission_plan, execute_submission,
+    analyze_submission, create_submission_plan, execute_submission, SubmissionPlan,
 };
 use jj_ryu::types::BranchStack;
 use std::path::Path;
+use std::time::Duration;
 
 /// Options for the sync command
 #[derive(Debug, Clone, Default)]
@@ -24,6 +28,7 @@ pub struct SyncOptions<'a> {
 }
 
 /// Run the sync command
+#[allow(clippy::too_many_lines)]
 pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_>) -> Result<()> {
     // Open workspace
     let mut workspace = JjWorkspace::open(path)?;
@@ -43,17 +48,27 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
     // Create platform service
     let platform = create_platform_service(&platform_config).await?;
 
-    // Fetch from remote
+    // Fetch from remote with spinner
     if !options.dry_run {
-        println!("Fetching from {remote_name}...");
+        let spinner = ProgressBar::new_spinner();
+        spinner.set_style(spinner_style());
+        spinner.set_message(format!("Fetching from {}...", remote_name.emphasis()));
+        spinner.enable_steady_tick(Duration::from_millis(80));
+
         workspace.git_fetch(&remote_name)?;
+
+        spinner.finish_with_message(format!(
+            "{} Fetched from {}",
+            check(),
+            remote_name.emphasis()
+        ));
     }
 
     // Build change graph
     let graph = build_change_graph(&workspace)?;
 
     if graph.stacks.is_empty() {
-        println!("No stacks to sync");
+        println!("{}", "No stacks to sync".muted());
         return Ok(());
     }
 
@@ -80,7 +95,7 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
     };
 
     if stacks_to_sync.is_empty() {
-        println!("No stacks to sync");
+        println!("{}", "No stacks to sync".muted());
         return Ok(());
     }
 
@@ -117,7 +132,7 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
             .interact()
             .map_err(|e| Error::Internal(format!("Failed to read confirmation: {e}")))?
         {
-            println!("Aborted");
+            println!("{}", "Aborted".muted());
             return Ok(());
         }
         println!();
@@ -129,7 +144,7 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
     let mut total_updated = 0;
 
     for (leaf_bookmark, plan) in stack_plans {
-        println!("Syncing stack: {leaf_bookmark}");
+        println!("{} {}", "Syncing stack:".emphasis(), leaf_bookmark.accent());
 
         let result = execute_submission(
             &plan,
@@ -148,10 +163,14 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
     // Summary
     println!();
     if options.dry_run {
-        println!("Dry run complete");
+        println!("{}", "Dry run complete".muted());
     } else {
         println!(
-            "Sync complete: {total_pushed} bookmarks pushed, {total_created} PRs created, {total_updated} PRs updated"
+            "{} {} pushed, {} created, {} updated",
+            format!("{CHECK} Sync complete:").success(),
+            total_pushed.accent(),
+            total_created.accent(),
+            total_updated.accent()
         );
     }
 
@@ -160,21 +179,21 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
 
 /// Print sync preview for --confirm
 fn print_sync_preview(stack_plans: &[(&str, SubmissionPlan)]) {
-    println!("Sync plan:");
+    println!("{}:", "Sync plan".emphasis());
     println!();
 
     for (leaf_bookmark, plan) in stack_plans {
-        println!("Stack: {leaf_bookmark}");
+        println!("{} {}", "Stack:".emphasis(), leaf_bookmark.accent());
 
         if plan.execution_steps.is_empty() {
-            println!("  Already in sync");
+            println!("  {}", "Already in sync".muted());
             println!();
             continue;
         }
 
-        println!("  Steps:");
+        println!("  {}:", "Steps".emphasis());
         for step in &plan.execution_steps {
-            println!("    → {step}");
+            println!("    {} {}", arrow(), step);
         }
 
         println!();

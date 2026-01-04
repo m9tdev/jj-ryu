@@ -1,14 +1,16 @@
 //! Submit command - submit a bookmark stack as PRs
 
+use crate::cli::style::{arrow, bullet, cross, Stylize, CHECK};
 use crate::cli::CliProgress;
+use anstream::{eprintln, println};
 use dialoguer::Confirm;
 use jj_ryu::error::{Error, Result};
 use jj_ryu::graph::build_change_graph;
-use jj_ryu::platform::{PlatformService, create_platform_service, parse_repo_info};
-use jj_ryu::repo::{JjWorkspace, select_remote};
+use jj_ryu::platform::{create_platform_service, parse_repo_info, PlatformService};
+use jj_ryu::repo::{select_remote, JjWorkspace};
 use jj_ryu::submit::{
-    ExecutionStep, SubmissionAnalysis, SubmissionPlan, analyze_submission, create_submission_plan,
-    execute_submission,
+    analyze_submission, create_submission_plan, execute_submission, ExecutionStep,
+    SubmissionAnalysis, SubmissionPlan,
 };
 use jj_ryu::types::ChangeGraph;
 use std::path::Path;
@@ -61,6 +63,7 @@ pub struct SubmitOptions<'a> {
 }
 
 /// Run the submit command
+#[allow(clippy::too_many_lines)]
 pub async fn run_submit(
     path: &Path,
     bookmark: &str,
@@ -96,7 +99,7 @@ pub async fn run_submit(
     let graph = build_change_graph(&workspace)?;
 
     if graph.bookmarks.is_empty() {
-        println!("No bookmarks found in repository");
+        println!("{}", "No bookmarks found in repository".muted());
         return Ok(());
     }
 
@@ -125,7 +128,7 @@ pub async fn run_submit(
     if options.select {
         let selected = interactive_select(&analysis)?;
         if selected.is_empty() {
-            println!("No bookmarks selected, aborting");
+            println!("{}", "No bookmarks selected, aborting".muted());
             return Ok(());
         }
         filter_plan_to_selection(&mut plan, &selected);
@@ -140,7 +143,7 @@ pub async fn run_submit(
             .interact()
             .map_err(|e| Error::Internal(format!("Failed to read confirmation: {e}")))?
         {
-            println!("Aborted");
+            println!("{}", "Aborted".muted());
             return Ok(());
         }
         println!();
@@ -162,8 +165,9 @@ pub async fn run_submit(
         println!();
         if result.success {
             println!(
-                "Successfully submitted {} bookmark{}",
-                analysis.segments.len(),
+                "{} {} bookmark{}",
+                format!("{CHECK} Successfully submitted").success(),
+                analysis.segments.len().accent(),
                 if analysis.segments.len() == 1 {
                     ""
                 } else {
@@ -174,7 +178,7 @@ pub async fn run_submit(
             if !result.created_prs.is_empty() {
                 println!(
                     "Created {} PR{}",
-                    result.created_prs.len(),
+                    result.created_prs.len().accent(),
                     if result.created_prs.len() == 1 {
                         ""
                     } else {
@@ -183,9 +187,9 @@ pub async fn run_submit(
                 );
             }
         } else {
-            eprintln!("Submission failed");
+            eprintln!("{} Submission failed", cross());
             for err in &result.errors {
-                eprintln!("  {err}");
+                eprintln!("  {}", err.error());
             }
         }
     }
@@ -380,7 +384,7 @@ fn interactive_select(analysis: &SubmissionAnalysis) -> Result<Vec<String>> {
             } else {
                 "(new)"
             };
-            format!("{} {}", s.bookmark.name, status)
+            format!("{} {}", s.bookmark.name, status.muted())
         })
         .collect();
 
@@ -435,41 +439,47 @@ fn filter_plan_to_selection(plan: &mut SubmissionPlan, selected: &[String]) {
 /// Print submission summary
 fn print_submission_summary(analysis: &SubmissionAnalysis, options: &SubmitOptions<'_>) {
     println!(
-        "Submitting {} bookmark{}{} in stack:",
-        analysis.segments.len(),
+        "{} {} bookmark{}{}:",
+        "Submitting".emphasis(),
+        analysis.segments.len().accent(),
         if analysis.segments.len() == 1 {
             ""
         } else {
             "s"
         },
-        options.scope
+        options.scope.to_string().muted()
     );
 
     // Display newest (leaf) first, oldest (closest to trunk) last
     for segment in analysis.segments.iter().rev() {
         let synced = if segment.bookmark.is_synced {
-            " (synced)"
+            format!(" {}", "(synced)".muted())
         } else {
-            ""
+            String::new()
         };
-        println!("  - {}{}", segment.bookmark.name, synced);
+        println!(
+            "  {} {}{}",
+            bullet(),
+            segment.bookmark.name.accent(),
+            synced
+        );
     }
     println!();
 }
 
 /// Print plan preview for --confirm
 fn print_plan_preview(plan: &SubmissionPlan) {
-    println!("Plan:");
+    println!("{}:", "Plan".emphasis());
 
     if plan.execution_steps.is_empty() {
-        println!("  Nothing to do - already in sync");
+        println!("  {}", "Nothing to do - already in sync".muted());
         println!();
         return;
     }
 
-    println!("  Steps:");
+    println!("  {}:", "Steps".emphasis());
     for step in &plan.execution_steps {
-        println!("    → {step}");
+        println!("    {} {}", arrow(), step);
     }
 
     println!();

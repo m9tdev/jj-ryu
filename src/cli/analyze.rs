@@ -1,5 +1,7 @@
 //! Default analyze command - print stack graph visualization
 
+use crate::cli::style::{self, check, pipe, up_arrow, Stylize};
+use anstream::println;
 use jj_ryu::error::Result;
 use jj_ryu::graph::build_change_graph;
 use jj_ryu::repo::JjWorkspace;
@@ -8,6 +10,7 @@ use std::path::Path;
 /// Run the analyze command (default when no subcommand given)
 ///
 /// Prints a text-based visualization of the bookmark stacks.
+#[allow(clippy::too_many_lines)]
 pub async fn run_analyze(path: &Path) -> Result<()> {
     // Open workspace
     let workspace = JjWorkspace::open(path)?;
@@ -16,16 +19,18 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
     let graph = build_change_graph(&workspace)?;
 
     if graph.stacks.is_empty() {
-        println!("No bookmark stacks found");
+        println!("{}", "No bookmark stacks found".muted());
         println!();
-        println!("Stacks are bookmarks that point to commits between trunk and your work.");
-        println!("Create a bookmark with: jj bookmark create <name>");
+        println!(
+            "{}",
+            "Stacks are bookmarks that point to commits between trunk and your work.".muted()
+        );
+        println!("{}", "Create a bookmark with: jj bookmark create <name>".muted());
         return Ok(());
     }
 
-    // Print stacks
-    println!("Bookmark Stacks");
-    println!("===============");
+    // Print header
+    println!("{}", "Bookmark Stacks".emphasis());
     println!();
 
     for (i, stack) in graph.stacks.iter().enumerate() {
@@ -36,7 +41,11 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
         // Print stack header with leaf bookmark name
         let leaf = stack.segments.last().unwrap();
         let leaf_name = &leaf.bookmarks[0].name;
-        println!("Stack #{}: {}", i + 1, leaf_name);
+        println!(
+            "{} {}",
+            format!("Stack #{}:", i + 1).emphasis(),
+            leaf_name.accent()
+        );
         println!();
 
         // Print each segment in reverse order (newest/leaf first, oldest last)
@@ -64,29 +73,39 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
                     desc.to_string()
                 };
 
-                let marker = if change.is_working_copy { "@" } else { "○" };
+                let marker = if change.is_working_copy {
+                    style::CURRENT
+                } else {
+                    style::BULLET
+                };
 
                 // Show bookmark on first commit of segment (the tip)
                 if is_first_in_segment && !bookmark_names.is_empty() {
                     for bm in &bookmark_names {
                         let bookmark = segment.bookmarks.iter().find(|b| b.name == *bm).unwrap();
                         let sync_status = if bookmark.is_synced {
-                            " ✓"
+                            format!(" {}", check())
                         } else if bookmark.has_remote {
-                            " ↑"
+                            format!(" {}", up_arrow())
                         } else {
-                            ""
+                            String::new()
                         };
-                        println!("       [{bm}]{sync_status}");
+                        println!("       [{}]{}", bm.accent(), sync_status);
                     }
                 }
-                println!("    {marker}  {change_short} {commit_short} {desc_display}");
-                println!("    │");
+                println!(
+                    "    {}  {} {} {}",
+                    marker,
+                    change_short.muted(),
+                    commit_short.muted(),
+                    desc_display
+                );
+                println!("    {}", pipe());
             }
         }
 
         // Print trunk base at bottom
-        println!("  trunk()");
+        println!("  {}", "trunk()".muted());
         println!();
     }
 
@@ -94,28 +113,39 @@ pub async fn run_analyze(path: &Path) -> Result<()> {
     let total_bookmarks: usize = graph.stacks.iter().map(|s| s.segments.len()).sum();
     println!(
         "{} stack{}, {} bookmark{}",
-        graph.stacks.len(),
+        graph.stacks.len().accent(),
         if graph.stacks.len() == 1 { "" } else { "s" },
-        total_bookmarks,
+        total_bookmarks.accent(),
         if total_bookmarks == 1 { "" } else { "s" }
     );
 
     if graph.excluded_bookmark_count > 0 {
         println!(
-            "({} bookmark{} excluded due to merge commits)",
-            graph.excluded_bookmark_count,
-            if graph.excluded_bookmark_count == 1 {
-                ""
-            } else {
-                "s"
-            }
+            "{}",
+            format!(
+                "({} bookmark{} excluded due to merge commits)",
+                graph.excluded_bookmark_count,
+                if graph.excluded_bookmark_count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            )
+            .muted()
         );
     }
 
     println!();
-    println!("Legend: ✓ = synced with remote, ↑ = needs push, @ = working copy");
+    println!(
+        "{}",
+        format!(
+            "Legend: {} = synced with remote, {} = needs push, {} = working copy",
+            style::CHECK, style::UP_ARROW, style::CURRENT
+        )
+        .muted()
+    );
     println!();
-    println!("To submit a stack: ryu submit <bookmark>");
+    println!("To submit a stack: {}", "ryu submit <bookmark>".accent());
 
     Ok(())
 }

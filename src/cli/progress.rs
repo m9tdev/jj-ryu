@@ -1,11 +1,14 @@
-//! Shared CLI progress callback
+//! Shared CLI progress callback with styled output and spinners
 
+use crate::cli::style::{check, cross, hyperlink_url, Stream, Stylize};
+use anstream::{eprintln, print, println};
 use async_trait::async_trait;
 use jj_ryu::error::Error;
 use jj_ryu::submit::{Phase, ProgressCallback, PushStatus};
 use jj_ryu::types::PullRequest;
+use std::io::Write;
 
-/// CLI progress callback that prints to stdout
+/// CLI progress callback that prints to stdout with styled output
 ///
 /// Two modes:
 /// - verbose (submit): shows all phases, detailed messages
@@ -31,10 +34,12 @@ impl CliProgress {
 impl ProgressCallback for CliProgress {
     async fn on_phase(&self, phase: Phase) {
         if self.verbose {
-            println!("{phase}...");
+            println!("{}...", phase.to_string().emphasis());
         } else {
             match phase {
-                Phase::Executing | Phase::AddingComments => println!("  {phase}..."),
+                Phase::Executing | Phase::AddingComments => {
+                    println!("  {}...", phase.to_string().muted());
+                }
                 _ => {}
             }
         }
@@ -43,45 +48,89 @@ impl ProgressCallback for CliProgress {
     async fn on_bookmark_push(&self, bookmark: &str, status: PushStatus) {
         if self.verbose {
             match &status {
-                PushStatus::Started => println!("  Pushing {bookmark}..."),
-                PushStatus::Success => println!("  ✓ Pushed {bookmark}"),
-                PushStatus::AlreadySynced => println!("  - {bookmark} {status}"),
-                PushStatus::Failed(_) => println!("  ✗ Failed to push {bookmark}: {status}"),
+                PushStatus::Started => {
+                    println!("  Pushing {}...", bookmark.accent());
+                }
+                PushStatus::Success => {
+                    println!("  {} Pushed {}", check(), bookmark.emphasis());
+                }
+                PushStatus::AlreadySynced => {
+                    println!(
+                        "  {} {} {}",
+                        "-".muted(),
+                        bookmark.accent(),
+                        status.to_string().muted()
+                    );
+                }
+                PushStatus::Failed(_) => {
+                    eprintln!(
+                        "  {} Failed to push {}: {}",
+                        cross(),
+                        bookmark.accent().for_stderr(),
+                        status.to_string().error()
+                    );
+                }
             }
         } else {
             match &status {
-                PushStatus::Started => print!("    Pushing {bookmark}... "),
-                PushStatus::Success => println!("done"),
-                _ => println!("{status}"),
+                PushStatus::Started => {
+                    print!("    Pushing {}... ", bookmark.accent());
+                    let _ = std::io::stdout().flush();
+                }
+                PushStatus::Success => {
+                    println!("{}", "done".success());
+                }
+                _ => {
+                    // Use warn style but on stdout for inline status
+                    println!("{}", status.to_string().warn().for_stdout());
+                }
             }
         }
     }
 
     async fn on_pr_created(&self, bookmark: &str, pr: &PullRequest) {
+        let pr_num = format!("#{}", pr.number);
         if self.verbose {
-            println!("  ✓ Created PR #{} for {}", pr.number, bookmark);
-            println!("    {}", pr.html_url);
+            println!(
+                "  {} Created PR {} for {}",
+                check(),
+                pr_num.accent(),
+                bookmark.emphasis()
+            );
+            println!("    {}", hyperlink_url(Stream::Stdout, &pr.html_url));
         } else {
             println!(
-                "    Created PR #{} for {} ({})",
-                pr.number, bookmark, pr.html_url
+                "    Created PR {} for {} ({})",
+                pr_num.accent(),
+                bookmark.accent(),
+                hyperlink_url(Stream::Stdout, &pr.html_url)
             );
         }
     }
 
     async fn on_pr_updated(&self, bookmark: &str, pr: &PullRequest) {
+        let pr_num = format!("#{}", pr.number);
         if self.verbose {
-            println!("  ✓ Updated PR #{} for {}", pr.number, bookmark);
+            println!(
+                "  {} Updated PR {} for {}",
+                check(),
+                pr_num.accent(),
+                bookmark.emphasis()
+            );
         } else {
-            println!("    Updated PR #{} for {}", pr.number, bookmark);
+            println!(
+                "    Updated PR {} for {}",
+                pr_num.accent(),
+                bookmark.accent()
+            );
         }
     }
 
-    async fn on_error(&self, error: &Error) {
+    async fn on_error(&self, err: &Error) {
         if self.verbose {
-            eprintln!("Error: {error}");
+            eprintln!("{}: {}", "error".error(), err);
         } else {
-            eprintln!("    Error: {error}");
+            eprintln!("    {}: {}", "error".error(), err);
         }
     }
 
@@ -89,7 +138,7 @@ impl ProgressCallback for CliProgress {
         if self.verbose {
             println!("{message}");
         } else {
-            println!("  {message}");
+            println!("  {}", message.muted());
         }
     }
 }

@@ -94,6 +94,17 @@ pub async fn run_sync(path: &Path, remote: Option<&str>, options: SyncOptions<'_
         graph.stacks.iter().collect()
     };
 
+    // Filter out stacks where all bookmarks are already synced
+    let stacks_to_sync: Vec<&BranchStack> = stacks_to_sync
+        .into_iter()
+        .filter(|stack| {
+            stack
+                .segments
+                .iter()
+                .any(|seg| seg.bookmarks.iter().any(|b| !b.has_remote || !b.is_synced))
+        })
+        .collect();
+
     if stacks_to_sync.is_empty() {
         println!("{}", "No stacks to sync".muted());
         return Ok(());

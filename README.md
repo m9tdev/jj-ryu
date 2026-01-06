@@ -1,5 +1,7 @@
 # jj-ryu
 
+testtest
+
 <img width="366" height="366" alt="image" src="https://github.com/user-attachments/assets/1691edfc-3b65-4f8d-b959-71ff21ff23e5" />
 
 Stacked PRs for [Jujutsu](https://jj-vcs.github.io/jj/latest/). Push bookmark stacks to GitHub and GitLab as chained pull requests.
@@ -51,6 +53,7 @@ ryu sync
 ### GitHub
 
 Uses (in order):
+
 1. `gh auth token` (GitHub CLI)
 2. `GITHUB_TOKEN` env var
 3. `GH_TOKEN` env var
@@ -60,6 +63,7 @@ For GitHub Enterprise: `export GH_HOST=github.mycompany.com`
 ### GitLab
 
 Uses (in order):
+
 1. `glab auth token` (GitLab CLI)
 2. `GITLAB_TOKEN` env var
 3. `GL_TOKEN` env var
@@ -258,19 +262,20 @@ ryu auth gitlab setup   # Show setup instructions
 
 Ryu's CLI is inspired by Graphite. Here's how commands map:
 
-| Graphite | Ryu |
-|----------|-----|
-| `gt submit` | `ryu submit <bookmark>` |
-| `gt submit --stack` | `ryu submit <bookmark> --stack` |
-| `gt submit --only` | `ryu submit <bookmark> --only` |
-| `gt submit --draft` | `ryu submit <bookmark> --draft` |
+| Graphite              | Ryu                               |
+| --------------------- | --------------------------------- |
+| `gt submit`           | `ryu submit <bookmark>`           |
+| `gt submit --stack`   | `ryu submit <bookmark> --stack`   |
+| `gt submit --only`    | `ryu submit <bookmark> --only`    |
+| `gt submit --draft`   | `ryu submit <bookmark> --draft`   |
 | `gt submit --publish` | `ryu submit <bookmark> --publish` |
 | `gt submit --confirm` | `ryu submit <bookmark> --confirm` |
-| `gt sync` | `ryu sync` |
-| `gt branch create` | `jj bookmark create` |
-| `gt restack` | `jj rebase` |
+| `gt sync`             | `ryu sync`                        |
+| `gt branch create`    | `jj bookmark create`              |
+| `gt restack`          | `jj rebase`                       |
 
 Key differences:
+
 - Ryu requires an explicit bookmark argument (jj doesn't track "current branch")
 - Stack management uses jj commands (`jj bookmark`, `jj rebase`), not ryu
 - `ryu sync --stack <bookmark>` syncs a single stack (Graphite syncs all)
